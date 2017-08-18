@@ -3,8 +3,13 @@
 #include <LedControl.h>
 
 #define DEBUG_MODE true
-#define MAX_CS_PIN 5
+#define MAX_CS_PIN 8
 #define NUM_DISPLAYS 3
+
+#define PLAYER_1 4
+#define PLAYER_2 5
+#define PLAYER_3 6
+#define PLAYER_4 7
 
 // Change these two numbers to the pins connected to your encoder.
 //   Best Performance: both pins have interrupt capability
@@ -25,18 +30,30 @@ LedControl lc = LedControl(MAX_CS_PIN, NUM_DISPLAYS);
 long oldPosition = -999;
 long oldVelocity = -999;
 long oldAccel = -999;
-float pollingRate = 1 / 15.0;
+float pollingRate = 1 / 35.0;
 float pollTimer = 0.0;
 unsigned long time;
 unsigned long lastTime;
 unsigned long deltaTime;
 
+int buttonPinArray[4] = {PLAYER_1, PLAYER_2, PLAYER_3, PLAYER_4};
+int previousButtonState[4] = {false, false, false, false};
+int currentButtonState[4] = {false, false, false, false};
+float debounceTime = 100.0f;
+
 #define BAUDRATE 57600
 
 void setup()
 {
-// digitalWrite(MAX_CS_PIN, HIGH);
-#ifdef DEBUG_MODE
+    // digitalWrite(MAX_CS_PIN, HIGH);
+
+    // buttoms
+    pinMode(PLAYER_1, INPUT);
+    pinMode(PLAYER_2, INPUT);
+    pinMode(PLAYER_3, INPUT);
+    pinMode(PLAYER_4, INPUT);
+
+#if DEBUG_MODE
     Serial.begin(BAUDRATE);
 #else
     Firmata.setFirmwareVersion(FIRMATA_FIRMWARE_MAJOR_VERSION, FIRMATA_FIRMWARE_MINOR_VERSION);
@@ -45,17 +62,12 @@ void setup()
     Firmata.begin(BAUDRATE);
 #endif
 
-    pinMode(LED_BUILTIN, OUTPUT);
-    pinMode(4, OUTPUT);
-    digitalWrite(LED_BUILTIN, HIGH);
-
     for (int i = 0; i < NUM_DISPLAYS; i++)
     {
         lc.shutdown(i, false);
         lc.clearDisplay(i);
         lc.setIntensity(i, 8);
     }
-
 
     // char test[] = {'1', '2', '3', '4', '5', '6', '7', '8'};
     // char test[] = {' ', ' ', '-', '4', 'a', '6', '7', '8'};
@@ -71,17 +83,6 @@ void stringCallback(char *myString)
 void sysexCallback(byte command, byte argc, byte *argv)
 {
     Firmata.sendSysex(command, argc, argv);
-}
-
-void blink(int num)
-{
-    for (int i = 0; i < num; i++)
-    {
-        digitalWrite(LED_BUILTIN, HIGH);
-        delay(200);
-        digitalWrite(LED_BUILTIN, LOW);
-        delay(200);
-    }
 }
 
 void loop()
@@ -100,18 +101,15 @@ void loop()
         pollTimer = 0;
     }
 
-    // reset builtin led (data light)
-    digitalWrite(LED_BUILTIN, LOW);
-    digitalWrite(4, LOW);
+    checkButtons();
 
     long newPosition = myEnc.read();
 
     if (newPosition != oldPosition)
     {
-        digitalWrite(4, HIGH);
         String stringValue = "";
         stringValue += newPosition;
-#ifdef DEBUG_MODE
+#if DEBUG_MODE
         Serial.println(newPosition);
 #else
         int stringLength = stringValue.length();
@@ -123,7 +121,6 @@ void loop()
         long velocity = oldPosition - newPosition;
         long accel = oldVelocity - velocity;
 
-        
         if (updateDisplay)
         {
             String velString = "";
@@ -134,14 +131,14 @@ void loop()
             displayChar(1, velString);
             displayChar(2, accelString);
         }
-        
+
         // do this last
         oldVelocity = velocity;
-        oldPosition = newPosition;    
-        oldAccel = accel;    
+        oldPosition = newPosition;
+        oldAccel = accel;
     }
 
-#ifdef DEBUG_MODE
+#if DEBUG_MODE
 #else
     while (Firmata.available())
     {
@@ -150,6 +147,44 @@ void loop()
 #endif
 
     // delay(10);
+}
+
+// buttons
+void checkButtons()
+{
+    // 1 2 3 4
+    for (int i = 0; i < 4; i++)
+    {
+        currentButtonState[i] = digitalRead(buttonPinArray[i]);
+#if DEBUG_MODE
+        if (currentButtonState[i] == previousButtonState[i])
+        {
+        }
+        else if (currentButtonState[i] == true)  
+        {
+            String debugString = "Button ";
+            debugString += i;
+            debugString += " pressed! [";
+            debugString += time / 1000;
+            debugString += "s]";
+            Serial.println(debugString);
+        } 
+        else if (currentButtonState[i] == false)
+        {
+            String debugString = "Button ";
+            debugString += i;
+            debugString += " released! [";
+            debugString += time / 1000;
+            debugString += "s]";
+            Serial.println(debugString);
+        }
+#endif
+        previousButtonState[i] = currentButtonState[i];
+    }
+#if DEBUG_MODE
+
+#else
+#endif
 }
 
 void displayNumber(int addr, byte data[])
