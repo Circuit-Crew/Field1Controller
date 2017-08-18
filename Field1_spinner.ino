@@ -2,9 +2,10 @@
 #include <Firmata.h>
 #include <LedControl.h>
 
-#define DEBUG_MODE true
+#define DEBUG_MODE false
 #define MAX_CS_PIN 8
 #define NUM_DISPLAYS 3
+#define DEBUG_LED_PIN 9
 
 #define PLAYER_1 4
 #define PLAYER_2 5
@@ -47,20 +48,28 @@ void setup()
 {
     // digitalWrite(MAX_CS_PIN, HIGH);
 
-    // buttoms
-    pinMode(PLAYER_1, INPUT);
-    pinMode(PLAYER_2, INPUT);
-    pinMode(PLAYER_3, INPUT);
-    pinMode(PLAYER_4, INPUT);
+    pinMode(DEBUG_LED_PIN, OUTPUT);
+    digitalWrite(DEBUG_LED_PIN, LOW);
 
-#if DEBUG_MODE
-    Serial.begin(BAUDRATE);
-#else
-    Firmata.setFirmwareVersion(FIRMATA_FIRMWARE_MAJOR_VERSION, FIRMATA_FIRMWARE_MINOR_VERSION);
-    Firmata.attach(STRING_DATA, stringCallback);
-    Firmata.attach(START_SYSEX, sysexCallback);
-    Firmata.begin(BAUDRATE);
-#endif
+    // Set button pins to input and init them as LOW
+    for (int i = 0; i < 4; i++)
+    {
+        pinMode(buttonPinArray[i], INPUT);
+        digitalWrite(buttonPinArray[i], LOW);
+    }
+
+    if (DEBUG_MODE)
+    {
+        Serial.begin(BAUDRATE);
+    }
+    else
+    {
+        String name = "Spinner";
+        Firmata.setFirmwareNameAndVersion(name.c_str(), FIRMATA_FIRMWARE_MAJOR_VERSION, FIRMATA_FIRMWARE_MINOR_VERSION);
+        Firmata.attach(STRING_DATA, stringCallback);
+        Firmata.attach(START_SYSEX, sysexCallback);
+        Firmata.begin(BAUDRATE);
+    }
 
     for (int i = 0; i < NUM_DISPLAYS; i++)
     {
@@ -77,7 +86,6 @@ void setup()
 void stringCallback(char *myString)
 {
     Firmata.sendString(myString);
-    digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void sysexCallback(byte command, byte argc, byte *argv)
@@ -109,14 +117,17 @@ void loop()
     {
         String stringValue = "";
         stringValue += newPosition;
-#if DEBUG_MODE
-        Serial.println(newPosition);
-#else
-        int stringLength = stringValue.length();
-        char charArray[stringLength];
-        stringValue.toCharArray(charArray, stringLength);
-        Firmata.sendString(charArray);
-#endif
+        if (DEBUG_MODE)
+        {
+            Serial.println(newPosition);
+        }
+        else
+        {
+            int stringLength = stringValue.length();
+            char charArray[stringLength];
+            stringValue.toCharArray(charArray, stringLength);
+            Firmata.sendString(charArray);
+        }
 
         long velocity = oldPosition - newPosition;
         long accel = oldVelocity - velocity;
@@ -138,53 +149,65 @@ void loop()
         oldAccel = accel;
     }
 
-#if DEBUG_MODE
-#else
-    while (Firmata.available())
+    if (!DEBUG_MODE)
     {
-        Firmata.processInput();
+        while (Firmata.available())
+        {
+            Firmata.processInput();
+        }
     }
-#endif
-
-    // delay(10);
 }
 
-// buttons
+// When debugging the arduino will handle the state checks itself
+// When connected to Field-1 it will just send the raw pin state and Field-1 will handle it
 void checkButtons()
 {
+    bool anyButtonPressed = false;
     // 1 2 3 4
     for (int i = 0; i < 4; i++)
     {
         currentButtonState[i] = digitalRead(buttonPinArray[i]);
-#if DEBUG_MODE
-        if (currentButtonState[i] == previousButtonState[i])
+        if (currentButtonState[i] == HIGH)
+            anyButtonPressed = true;
+        if (DEBUG_MODE)
         {
+            if (currentButtonState[i] == previousButtonState[i])
+            {
+            }
+            else if (currentButtonState[i] == HIGH)
+            {
+                String debugString = "Button ";
+                debugString += i;
+                debugString += " pressed! [";
+                debugString += time / 1000;
+                debugString += "s]";
+                Serial.println(debugString);
+            }
+            else if (currentButtonState[i] == LOW)
+            {
+                String debugString = "Button ";
+                debugString += i;
+                debugString += " released! [";
+                debugString += time / 1000;
+                debugString += "s]";
+                Serial.println(debugString);
+            }
         }
-        else if (currentButtonState[i] == true)  
+        else
         {
-            String debugString = "Button ";
-            debugString += i;
-            debugString += " pressed! [";
-            debugString += time / 1000;
-            debugString += "s]";
-            Serial.println(debugString);
-        } 
-        else if (currentButtonState[i] == false)
-        {
-            String debugString = "Button ";
-            debugString += i;
-            debugString += " released! [";
-            debugString += time / 1000;
-            debugString += "s]";
-            Serial.println(debugString);
+            if (currentButtonState[i] != previousButtonState[i])
+            {
+                // if (currentButtonState[i] == HIGH)
+                //     anyButtonPressed = true;
+                // make sure the first parameter is the pin number not the index in the for-loop
+
+                Firmata.sendDigitalPort((byte)buttonPinArray[i], (byte)currentButtonState[i]);
+            }
         }
-#endif
         previousButtonState[i] = currentButtonState[i];
     }
-#if DEBUG_MODE
 
-#else
-#endif
+    digitalWrite(DEBUG_LED_PIN, anyButtonPressed);
 }
 
 void displayNumber(int addr, byte data[])
