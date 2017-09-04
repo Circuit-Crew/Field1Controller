@@ -1,5 +1,4 @@
 #include <Boards.h>
-#include <Firmata.h>
 #include <FirmataConstants.h>
 #include <FirmataDefines.h>
 #include <FirmataMarshaller.h>
@@ -10,49 +9,56 @@
 #include <LedControl.h>
 
 #define DEBUG_MODE false
+#define ENABLE_MAX_DISPLAY true // if using MAX7219 modules for spinner debugging
 #define MAX_CS_PIN 8
 #define NUM_DISPLAYS 3
 #define DEBUG_LED_PIN 12
+#define NUM_ENCODER 2
 
-#define PLAYER_1 4
-#define PLAYER_2 5
-#define PLAYER_3 6
-#define PLAYER_4 7
+#define BUTTON_1 4
+#define BUTTON_2 5
+#define BUTTON_3 6
+#define BUTTON_4 7
+#define ENCODER_OUTPUT_1 A0
+#define ENCODER_OUTPUT_2 A1
+#define ENCODER_OUTPUT_3 A2
+#define ENCODER_OUTPUT_4 A3
+#define BAUDRATE 57600
 
 // Change these two numbers to the pins connected to your encoder.
 //   Best Performance: both pins have interrupt capability
 //   Good Performance: only the first pin has interrupt capability
 //   Low Performance:  neither pin has interrupt capability
-Encoder myEnc(2, 3);
-Encoder myEnc2(A4, A5);
+Encoder* spinner[NUM_ENCODER];
+Encoder myEnc =  Encoder(2, 3);
+Encoder myEnc2 = Encoder(A4, A5);
+// Encoder myEnc3(A4, A5);
+// Encoder myEnc4(A4, A5);
+
 //   avoid using pins with LEDs attachedP
 
 // LedControl
-//                        MOSI              MISO              SCK             SS(Slave)   SS(Master)
-// Mega1280 or Mega2560	  51 or ICSP-4	    50 or ICSP-1	  52 or ICSP-3	  53	        -
-// Uno              	  11 or ICSP-4	    12 or ICSP-1	  13 or ICSP-3	  53	        -
+//                          MOSI                    MISO                            SCK                         SS(Slave)            SS(Master)
+// Mega         	   51 or ICSP-4	         50 or ICSP-1	            52 or ICSP-3	        53	                     -
+// Uno              	 11 or ICSP-4	      12 or ICSP-1	             13 or ICSP-3	          53	                    -
 
 // MAX7219 digit indices are (left-to-right) 87654321
 // LedControl readjusts the idices to be 0-indexed (76543210)
 
 LedControl lc = LedControl(MAX_CS_PIN, NUM_DISPLAYS);
-long oldPosition = -999;
-long oldPosition2 = -999;
-long oldVelocity = -999;
-long oldAccel = -999;
+long previousPos[NUM_ENCODER];
+long previousVel[NUM_ENCODER];
+long previousAccel[NUM_ENCODER];
+String display[NUM_ENCODER];
 float pollingRate = 1 / 35.0;
 float pollTimer = 0.0;
 unsigned long time;
 unsigned long lastTime;
 unsigned long deltaTime;
-String display[2];
 
-int buttonPinArray[4] = {PLAYER_1, PLAYER_2, PLAYER_3, PLAYER_4};
-int previousButtonState[4] = {false, false, false, false};
-int currentButtonState[4] = {false, false, false, false};
 float debounceTime = 100.0f;
 
-#define BAUDRATE 57600
+byte encoderOutputPins[4] = { ENCODER_OUTPUT_1, ENCODER_OUTPUT_2, ENCODER_OUTPUT_3, ENCODER_OUTPUT_4};
 
 byte previousPIN[TOTAL_PORTS]; // PIN means PORT for input
 byte previousPORT[TOTAL_PORTS];
@@ -112,13 +118,6 @@ void setup()
     pinMode(DEBUG_LED_PIN, OUTPUT);
     digitalWrite(DEBUG_LED_PIN, LOW);
 
-    // Set button pins to input and init them as LOW
-    for (int i = 0; i < 4; i++)
-    {
-        digitalWrite(buttonPinArray[i], LOW);
-        pinMode(buttonPinArray[i], INPUT);
-    }
-
     if (DEBUG_MODE)
     {
         Serial.begin(BAUDRATE);
@@ -134,6 +133,10 @@ void setup()
         Firmata.begin(BAUDRATE);
     }
 
+    // Setup rotary encoders
+    spinner[0] = &myEnc;
+    spinner[1] = &myEnc2;
+
     for (int i = 0; i < NUM_DISPLAYS; i++)
     {
         lc.shutdown(i, false);
@@ -148,6 +151,11 @@ void setup()
 
 void loop()
 {
+    if (DEBUG_MODE)
+    {
+        debugUpdate();
+        return;
+    }
 
     byte i;
     for (i = 0; i < TOTAL_PORTS; i++)
@@ -155,12 +163,9 @@ void loop()
         outputPort(i, readPort(i, 0xff));
     }
 
-    if (!DEBUG_MODE)
+    while (Firmata.available())
     {
-        while (Firmata.available())
-        {
-            Firmata.processInput();
-        }
+        Firmata.processInput();
     }
 
     // time
@@ -177,44 +182,34 @@ void loop()
         pollTimer = 0;
     }
 
-    checkButtons();
+    updateEncoders(updateDisplay);
 
-    long newPosition = myEnc.read();
-    String s1 = checkEncoder(newPosition, oldPosition);
-    display[0] = s1;
-    long newPosition2 = myEnc2.read();
-    String s2 = checkEncoder(newPosition2, oldPosition2);
-    display[1] = s2;
+}
 
-    long velocity = oldPosition - newPosition;
-    long accel = oldVelocity - velocity;
+void debugUpdate()
+{
+}
+
+void updateEncoders(bool updateDisplay)
+{
+    for (int i = 0; i < NUM_ENCODER; i++)
+    {
+        long newPosition = spinner[i]->read();
+        display[i] = checkEncoder(newPosition, previousPos[i]);
+        long velocity = previousPos[i] - newPosition;
+        long accel = previousAccel[i] - velocity;
+        previousPos[i] = newPosition;
+
+        analogWrite(encoderOutputPins[i], (int) velocity);
+    }
 
     if (updateDisplay)
     {
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < NUM_DISPLAYS; i++)
         {
             displayChar(i, display[i]);
         }
-        // displayChar(1, s2);
-        // displayChar(0, s2);
     }
-
-    // if (updateDisplay)
-    // {
-    //     String velString = "";
-    //     velString += velocity;
-    //     String accelString = "";
-    //     accelString += accel;
-    //     displayChar(0, stringValue);
-    //     displayChar(1, velString);
-    //     displayChar(2, accelString);
-    // }
-
-    // do this last
-    oldVelocity = velocity;
-    oldPosition = newPosition;
-    oldPosition2 = newPosition2;
-    oldAccel = accel;
 }
 
 String checkEncoder(long newPos, long oldPos)
@@ -236,58 +231,6 @@ String checkEncoder(long newPos, long oldPos)
         }
     }
     return stringValue;
-}
-
-// When debugging the arduino will handle the state checks itself
-// When connected to Field-1 it will just send the raw pin state and Field-1 will handle it
-void checkButtons()
-{
-    bool anyButtonPressed = false;
-    // 1 2 3 4
-    for (int i = 0; i < 4; i++)
-    {
-        currentButtonState[i] = digitalRead(buttonPinArray[i]);
-        if (currentButtonState[i] == HIGH)
-            anyButtonPressed = true;
-        if (DEBUG_MODE)
-        {
-            if (currentButtonState[i] == previousButtonState[i])
-            {
-            }
-            else if (currentButtonState[i] == HIGH)
-            {
-                String debugString = "Button ";
-                debugString += i;
-                debugString += " pressed! [";
-                debugString += time / 1000;
-                debugString += "s]";
-                Serial.println(debugString);
-            }
-            else if (currentButtonState[i] == LOW)
-            {
-                String debugString = "Button ";
-                debugString += i;
-                debugString += " released! [";
-                debugString += time / 1000;
-                debugString += "s]";
-                Serial.println(debugString);
-            }
-        }
-        else
-        {
-            if (currentButtonState[i] != previousButtonState[i])
-            {
-                if (currentButtonState[i] == HIGH)
-                    anyButtonPressed = true;
-                // make sure the first parameter is the pin number not the index in the for-loop
-
-                // Firmata.sendDigitalPort((byte)buttonPinArray[i], (byte)currentButtonState[i]);
-            }
-        }
-        previousButtonState[i] = currentButtonState[i];
-    }
-    digitalWrite(DEBUG_LED_PIN, anyButtonPressed);
-    // Firmata.sendDigitalPort(DEBUG_LED_PIN, digitalRead(DEBUG_LED_PIN));
 }
 
 void displayNumber(int addr, byte data[])
